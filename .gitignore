@@ -1,0 +1,30 @@
+# Terraform-specific ignores
+.terraform/
+*.tfstate
+*.tfstate.backup
+*.tfstate.*.backup
+*.tfvars
+.terraform.lock.hcl
+crash.log
+
+# Exclude credentials and secrets
+.env
+.aws/
+credentials.json
+*.pem
+kubeconfig*
+
+# Exclude blog and note files
+blog.md
+.note.md
+
+# OS-specific files
+.DS_Store
+Thumbs.db
+
+# Editor directories and files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~ 
