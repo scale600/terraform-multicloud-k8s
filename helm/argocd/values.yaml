@@ -1,0 +1,111 @@
+## ArgoCD Helm values
+
+global:
+  image:
+    tag: "v2.7.0"
+
+server:
+  extraArgs:
+    - --insecure
+  
+  ingress:
+    enabled: false
+    # For production, enable and configure your ingress
+    # annotations:
+    #   kubernetes.io/ingress.class: alb
+    #   alb.ingress.kubernetes.io/scheme: internet-facing
+    #   alb.ingress.kubernetes.io/target-type: ip
+    #   alb.ingress.kubernetes.io/listen-ports: '[{"HTTPS":443}]'
+    #   alb.ingress.kubernetes.io/certificate-arn: arn:aws:acm:region:account-id:certificate/certificate-id
+  
+  resources:
+    limits:
+      cpu: 500m
+      memory: 512Mi
+    requests:
+      cpu: 100m
+      memory: 128Mi
+  
+  # Enable auto-sync for applications
+  # Required for GitOps workflow
+  configEnabled: true
+  config:
+    application.instanceLabelKey: argocd.argoproj.io/instance
+    repositories: |
+      - url: https://github.com/your-username/kubernetes-manifests.git
+        name: kubernetes-manifests
+        type: git
+    resource.customizations: |
+      networking.k8s.io/Ingress:
+        health.lua: |
+          hs = {}
+          hs.status = "Healthy"
+          return hs
+    statusbadge.enabled: "true"
+    timeout.reconciliation: 180s
+    timeout.hard.reconciliation: 300s
+
+  rbacConfig:
+    policy.default: role:readonly
+    policy.csv: |
+      g, system:cluster-admins, role:admin
+
+repoServer:
+  resources:
+    limits:
+      cpu: 200m
+      memory: 256Mi
+    requests:
+      cpu: 50m
+      memory: 64Mi
+
+controller:
+  resources:
+    limits:
+      cpu: 500m
+      memory: 512Mi
+    requests:
+      cpu: 100m
+      memory: 128Mi
+
+redis:
+  resources:
+    limits:
+      cpu: 200m
+      memory: 128Mi
+    requests:
+      cpu: 50m
+      memory: 64Mi
+
+# Recommended settings for production
+applicationSet:
+  enabled: true
+  resources:
+    limits:
+      cpu: 200m
+      memory: 256Mi
+    requests:
+      cpu: 50m
+      memory: 64Mi
+
+# Enable notifications controller
+notifications:
+  enabled: true
+  resources:
+    limits:
+      cpu: 100m
+      memory: 128Mi
+    requests:
+      cpu: 50m
+      memory: 64Mi
+
+# Default admin password - will be overridden by the pre-created secret
+configs:
+  secret:
+    createSecret: true
+    # For production, set your admin password:
+    # argocdServerAdminPassword: "$2a$10$..."
+
+# Configure high availability for production
+ha:
+  enabled: false  # Set to true for production 

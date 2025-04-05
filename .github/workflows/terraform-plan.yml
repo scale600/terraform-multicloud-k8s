@@ -1,0 +1,114 @@
+name: Terraform Plan
+
+on:
+  pull_request:
+    branches: [ main, develop ]
+    paths:
+      - '**/*.tf'
+      - '**/*.tfvars'
+      - '.github/workflows/terraform-plan.yml'
+
+env:
+  AWS_REGION: us-west-2
+  ENVIRONMENT: dev
+
+permissions:
+  id-token: write
+  contents: read
+  pull-requests: write
+
+jobs:
+  plan:
+    name: Plan
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: 1.5.0
+          cli_config_credentials_token: ${{ secrets.TF_API_TOKEN }}
+
+      - name: Terraform Format Check
+        id: fmt
+        run: terraform fmt -check -recursive
+        continue-on-error: true
+
+      - name: Get Terraform State Bucket Name
+        id: s3bucket
+        run: |
+          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          echo "s3_bucket=terraform-k8s-state-${ACCOUNT_ID}" >> $GITHUB_OUTPUT
+
+      - name: Terraform Init for ${{ env.ENVIRONMENT }}
+        id: init
+        run: |
+          cd environments/${{ env.ENVIRONMENT }}
+          terraform init \
+            -backend-config="bucket=${{ steps.s3bucket.outputs.s3_bucket }}" \
+            -backend-config="key=${{ env.ENVIRONMENT }}/terraform.tfstate" \
+            -backend-config="region=${{ env.AWS_REGION }}"
+      
+      - name: Terraform Plan for ${{ env.ENVIRONMENT }}
+        id: plan
+        run: |
+          cd environments/${{ env.ENVIRONMENT }}
+          terraform plan -no-color -input=false -out=tfplan
+        continue-on-error: true
+
+      - name: Upload Plan Artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: terraform-plan-${{ env.ENVIRONMENT }}
+          path: environments/${{ env.ENVIRONMENT }}/tfplan
+          retention-days: 5
+
+      - name: Terraform Show
+        id: show
+        run: |
+          cd environments/${{ env.ENVIRONMENT }}
+          terraform show -no-color tfplan > tfplan.txt
+
+      - name: Post Plan to PR
+        uses: actions/github-script@v6
+        if: github.event_name == 'pull_request'
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require('fs');
+            const planOutput = fs.readFileSync('environments/${{ env.ENVIRONMENT }}/tfplan.txt', 'utf8');
+            const truncatedOutput = planOutput.length > 65000 
+              ? planOutput.substring(0, 65000) + "\n\n... (truncated due to GitHub comment size limit)\n\nSee plan artifact for full details."
+              : planOutput;
+            
+            const output = `## Terraform Plan for ${{ env.ENVIRONMENT }} Environment
+
+            ### Status: ${${{ steps.plan.outcome }} === 'success' ? '✅ Success' : '❌ Failed'}
+
+            <details><summary>Show Plan</summary>
+
+            \`\`\`terraform
+            ${truncatedOutput}
+            \`\`\`
+
+            </details>`;
+            
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: output
+            })
+
+      - name: Check Plan Status
+        if: steps.plan.outcome != 'success'
+        run: exit 1 

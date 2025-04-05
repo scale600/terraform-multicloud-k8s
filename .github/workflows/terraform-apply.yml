@@ -1,0 +1,110 @@
+name: Terraform Apply
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - '**/*.tf'
+      - '**/*.tfvars'
+      - '.github/workflows/terraform-apply.yml'
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to deploy to'
+        required: true
+        default: 'dev'
+        type: choice
+        options: ['dev', 'staging', 'prod']
+
+env:
+  AWS_REGION: us-west-2
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  apply:
+    name: Apply
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: 1.5.0
+          cli_config_credentials_token: ${{ secrets.TF_API_TOKEN }}
+
+      - name: Set Environment
+        id: env
+        run: |
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            echo "environment=${{ github.event.inputs.environment }}" >> $GITHUB_OUTPUT
+          else
+            echo "environment=dev" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Get Terraform State Bucket Name
+        id: s3bucket
+        run: |
+          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          echo "s3_bucket=terraform-k8s-state-${ACCOUNT_ID}" >> $GITHUB_OUTPUT
+
+      - name: Terraform Init for ${{ steps.env.outputs.environment }}
+        id: init
+        run: |
+          cd environments/${{ steps.env.outputs.environment }}
+          terraform init \
+            -backend-config="bucket=${{ steps.s3bucket.outputs.s3_bucket }}" \
+            -backend-config="key=${{ steps.env.outputs.environment }}/terraform.tfstate" \
+            -backend-config="region=${{ env.AWS_REGION }}"
+      
+      - name: Terraform Plan for ${{ steps.env.outputs.environment }}
+        id: plan
+        run: |
+          cd environments/${{ steps.env.outputs.environment }}
+          terraform plan -no-color -input=false -out=tfplan
+
+      - name: Terraform Apply for ${{ steps.env.outputs.environment }}
+        id: apply
+        run: |
+          cd environments/${{ steps.env.outputs.environment }}
+          terraform apply -no-color -input=false tfplan
+
+      - name: Deploy Kubernetes Addons
+        id: addons
+        run: |
+          cd environments/${{ steps.env.outputs.environment }}
+          
+          # Export kubeconfig from terraform output
+          terraform output -raw kubeconfig > kubeconfig.yaml
+          export KUBECONFIG=$(pwd)/kubeconfig.yaml
+          
+          # Run deploy-addons.sh script
+          ../../scripts/deploy-addons.sh ${{ steps.env.outputs.environment }}
+        
+      - name: Post Apply Summary
+        run: |
+          echo "### Terraform Apply for ${{ steps.env.outputs.environment }} Environment" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          cd environments/${{ steps.env.outputs.environment }}
+          
+          echo "#### Cluster Information" >> $GITHUB_STEP_SUMMARY
+          echo "- **Cluster Name**: $(terraform output -raw cluster_name)" >> $GITHUB_STEP_SUMMARY
+          echo "- **Region**: $(terraform output -raw region)" >> $GITHUB_STEP_SUMMARY
+          echo "- **Endpoint**: $(terraform output -raw cluster_endpoint)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          echo "#### Next Steps" >> $GITHUB_STEP_SUMMARY
+          echo "1. Configure kubectl: \`aws eks update-kubeconfig --name $(terraform output -raw cluster_name) --region $(terraform output -raw region)\`" >> $GITHUB_STEP_SUMMARY
+          echo "2. Access ArgoCD UI: \`kubectl port-forward svc/argocd-server -n argocd 8080:443\`" >> $GITHUB_STEP_SUMMARY 

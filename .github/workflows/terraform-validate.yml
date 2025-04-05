@@ -1,0 +1,55 @@
+name: Terraform Validate
+
+on:
+  push:
+    branches: [ main, develop ]
+    paths:
+      - '**/*.tf'
+      - '**/*.tfvars'
+      - '.github/workflows/terraform-validate.yml'
+  pull_request:
+    branches: [ main, develop ]
+    paths:
+      - '**/*.tf'
+      - '**/*.tfvars'
+      - '.github/workflows/terraform-validate.yml'
+
+jobs:
+  validate:
+    name: Validate
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: 1.5.0
+          cli_config_credentials_token: ${{ secrets.TF_API_TOKEN }}
+
+      - name: Terraform Format Check
+        id: fmt
+        run: terraform fmt -check -recursive
+        continue-on-error: true
+
+      - name: Terraform Init
+        id: init
+        run: terraform init -backend=false
+      
+      - name: Terraform Validate
+        id: validate
+        run: terraform validate
+
+      - name: Terraform Format Report
+        if: steps.fmt.outcome == 'failure'
+        run: |
+          echo "### Terraform Format Failed" >> $GITHUB_STEP_SUMMARY
+          echo "Please run 'terraform fmt -recursive' to fix format issues" >> $GITHUB_STEP_SUMMARY
+
+      - name: Terraform Validate Report
+        if: steps.validate.outcome == 'failure'
+        run: |
+          echo "### Terraform Validation Failed" >> $GITHUB_STEP_SUMMARY
+          echo "Please fix the validation errors before merging" >> $GITHUB_STEP_SUMMARY 

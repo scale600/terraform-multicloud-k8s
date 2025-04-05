@@ -1,0 +1,117 @@
+## Falco Security Monitoring Helm Values
+
+# Image configuration
+image:
+  registry: docker.io
+  repository: falcosecurity/falco
+  tag: 0.35.0
+
+# Resource limits
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    cpu: 200m
+    memory: 512Mi
+
+# Driver for Falco
+driver:
+  enabled: true
+  kind: module
+  loader:
+    enabled: true
+
+# Enable/disable audit log support
+auditLog:
+  enabled: true
+
+# Enable/disable additional functionality
+falco:
+  json_output: true
+  json_include_output_property: true
+  http_output:
+    enabled: true
+    url: "http://falcosidekick:2801/"
+  grpc:
+    enabled: true
+  grpc_output:
+    enabled: true
+
+# Enable Falcosidekick
+falcosidekick:
+  enabled: true
+  replicaCount: 1
+  service:
+    type: ClusterIP
+  config:
+    debug: false
+    slack:
+      webhookurl: "https://hooks.slack.com/services/YOUR-WEBHOOK-ID"
+      minimumpriority: "warning"
+      messageformat: "json"
+    prometheus:
+      hostport: "http://prometheus-server.monitoring.svc.cluster.local:9090"
+
+# Custom rules for AWS environment
+customRules:
+  rules-aws.yaml: |-
+    - rule: AWS Credentials Accessed
+      desc: Detect attempts to access AWS credentials
+      condition: >
+        spawned_process and
+        (proc.name = "cat" or proc.name = "ls") and
+        (proc.args contains "credentials" or
+         proc.args contains ".aws/config")
+      output: AWS credentials accessed by process (user=%user.name command=%proc.cmdline)
+      priority: WARNING
+
+    - rule: AWS Instance Metadata Service (IMDS) Accessed
+      desc: Detect attempts to access the AWS Instance Metadata Service
+      condition: >
+        spawned_process and
+        proc.name in ("curl", "wget", "fetch") and
+        (proc.args contains "169.254.169.254" or
+         proc.args contains "latest/meta-data" or
+         proc.args contains "latest/user-data")
+      output: AWS Instance Metadata Service (IMDS) accessed by process (user=%user.name command=%proc.cmdline)
+      priority: WARNING
+
+    - rule: EKS IAM Role Exfiltration Attempt
+      desc: Detect attempts to exfiltrate EKS IAM role token
+      condition: >
+        spawned_process and
+        (proc.args contains "sts:AssumeRole" or
+         proc.args contains "sts:GetSessionToken" or
+         proc.args contains "eks:DescribeCluster" or
+         proc.args contains "token-keyring") and
+        not proc.args contains "aws-auth"
+      output: Possible IAM role exfiltration attempt (user=%user.name command=%proc.cmdline)
+      priority: WARNING
+
+# Default rules
+rulesFile:
+  - /etc/falco/falco_rules.yaml
+  - /etc/falco/falco_rules.local.yaml
+  - /etc/falco/rules.d
+
+# Service and RBAC configuration
+service:
+  type: ClusterIP
+
+rbac:
+  create: true
+
+podSecurityPolicy:
+  create: false
+
+serviceAccount:
+  create: true
+  name: falco
+
+# Toleration for taint nodes
+tolerations:
+  - key: node-role.kubernetes.io/master
+    effect: NoSchedule
+  - key: node-role.kubernetes.io/control-plane
+    effect: NoSchedule 
