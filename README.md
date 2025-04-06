@@ -418,14 +418,3 @@ The project includes a comprehensive monitoring stack with these specific config
 ## 📄 License
 
 This project is licensed under the MIT License - see the LICENSE file for details.
-
-## 📬 Contact
-
-For questions or support, please open an issue in the GitHub repository or contact the maintainers directly at devops@example.com.
-
-## 📋 Roadmap
-
-- **Q3 2023**: Add support for GCP GKE clusters
-- **Q4 2023**: Implement cost optimization features
-- **Q1 2024**: Add Azure AKS support
-- **Q2 2024**: Implement multi-cluster federation 
